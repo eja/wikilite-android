@@ -48,5 +48,4 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
-    implementation("org.json:json:20231013")
 }
