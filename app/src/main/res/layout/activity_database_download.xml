@@ -14,14 +14,6 @@
         android:gravity="center"
         android:layout_marginBottom="16dp" />
 
-    <Button
-        android:id="@+id/btnRefresh"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Refresh"
-        android:layout_gravity="end"
-        android:layout_marginBottom="16dp" />
-
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerView"
         android:layout_width="match_parent"

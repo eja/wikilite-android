@@ -2,14 +2,12 @@ package it.eja.wikilite
 
 import android.app.Dialog
 import android.os.Bundle
-import android.os.Environment
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
-import java.io.File
 
 class DownloadDialog(
     private val filePath: String,
@@ -28,9 +26,7 @@ class DownloadDialog(
         val fileName = filePath.substringAfterLast("/")
         tvFileInfo.text = "Download: $fileName"
 
-        val storageOptions = getAvailableStorageLocations()
-        val locations = storageOptions.first
-        val paths = storageOptions.second
+        val (locations, paths) = getAvailableStorageLocations()
 
         val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, locations)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
@@ -42,15 +38,19 @@ class DownloadDialog(
             }
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
-                selectedPath = paths[0]
+                if (paths.isNotEmpty()) {
+                    selectedPath = paths[0]
+                }
             }
         }
 
-        selectedPath = paths[0]
+        if (paths.isNotEmpty()) {
+            selectedPath = paths[0]
+        }
 
         return AlertDialog.Builder(requireContext())
             .setView(view)
-            .setTitle("Download Database")
+            .setTitle("Choose Download Location")
             .setPositiveButton("Download") { dialog, _ ->
                 listener(filePath, selectedPath)
                 dialog.dismiss()
@@ -64,35 +64,25 @@ class DownloadDialog(
     private fun getAvailableStorageLocations(): Pair<List<String>, List<String>> {
         val locationNames = mutableListOf<String>()
         val locationPaths = mutableListOf<String>()
+        val storageDirs = requireContext().getExternalFilesDirs(null).filterNotNull()
 
-        locationNames.add("Internal Storage")
-        locationPaths.add(Environment.getExternalStorageDirectory().absolutePath)
+        if (storageDirs.isNotEmpty()) {
+            locationNames.add("Internal App Storage")
+            locationPaths.add(storageDirs[0].absolutePath)
+        }
 
-        locationNames.add("Downloads")
-        locationPaths.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath)
+        if (storageDirs.size > 1) {
+            for (i in 1 until storageDirs.size) {
+                locationNames.add("External App Storage")
+                locationPaths.add(storageDirs[i].absolutePath)
+            }
+        }
 
-        locationNames.add("Documents")
-        locationPaths.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS).absolutePath)
-
-        val externalSdPath = getExternalSdCardPath()
-        if (externalSdPath != null) {
-            locationNames.add("External SD Card")
-            locationPaths.add(externalSdPath)
+        if (locationPaths.isEmpty()) {
+            locationNames.add("Internal App Storage")
+            locationPaths.add(requireContext().filesDir.absolutePath)
         }
 
         return Pair(locationNames, locationPaths)
-    }
-
-    private fun getExternalSdCardPath(): String? {
-        val storageDirs = requireContext().getExternalFilesDirs(null)
-        if (storageDirs.size > 1) {
-            for (i in 1 until storageDirs.size) {
-                val path = storageDirs[i]?.absolutePath
-                if (path != null && !path.contains("/storage/emulated/") && path.contains("/storage/")) {
-                    return File(path).parentFile?.parentFile?.absolutePath
-                }
-            }
-        }
-        return null
     }
 }

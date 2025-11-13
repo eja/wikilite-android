@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.AsyncTask
 import android.os.Bundle
-import android.widget.Button
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -43,9 +42,6 @@ class DatabaseDownloadActivity : AppCompatActivity() {
             showDownloadOptions(filePath)
         }
         recyclerView.adapter = adapter
-
-        val btnRefresh: Button = findViewById(R.id.btnRefresh)
-        btnRefresh.setOnClickListener { loadDatabaseFiles() }
     }
 
     private fun loadDatabaseFiles() {
@@ -97,18 +93,40 @@ class DatabaseDownloadActivity : AppCompatActivity() {
         return files
     }
 
-    private fun showDownloadOptions(filePath: String) {
-        val dialog = DownloadDialog(filePath) { selectedFilePath, downloadPath ->
-            startDownload(selectedFilePath, downloadPath)
+    private fun getAppStorageLocations(): List<String> {
+        val locationPaths = mutableListOf<String>()
+        val storageDirs = applicationContext.getExternalFilesDirs(null).filterNotNull()
+
+        if (storageDirs.isNotEmpty()) {
+            locationPaths.addAll(storageDirs.map { it.absolutePath })
         }
-        dialog.show(supportFragmentManager, "download_dialog")
+
+        if (locationPaths.isEmpty()) {
+            locationPaths.add(applicationContext.filesDir.absolutePath)
+        }
+        return locationPaths
+    }
+
+    private fun showDownloadOptions(filePath: String) {
+        val storageLocations = getAppStorageLocations()
+
+        if (storageLocations.size <= 1) {
+            val downloadPath = storageLocations.first()
+            Toast.makeText(this, "Downloading to app storage...", Toast.LENGTH_SHORT).show()
+            startDownload(filePath, downloadPath)
+        } else {
+            val dialog = DownloadDialog(filePath) { selectedFilePath, downloadPath ->
+                startDownload(selectedFilePath, downloadPath)
+            }
+            dialog.show(supportFragmentManager, "download_dialog")
+        }
     }
 
     private fun startDownload(filePath: String, downloadPath: String) {
         DownloadAndExtractTask().execute(filePath to downloadPath)
     }
 
-    private inner class DownloadAndExtractTask : AsyncTask<Pair<String, String>, Int, Boolean>() {
+    private inner class DownloadAndExtractTask : AsyncTask<Pair<String, String>, Long, Boolean>() {
         private lateinit var currentFilePath: String
         private lateinit var finalDbPath: String
         private lateinit var downloadPath: String
@@ -116,8 +134,10 @@ class DatabaseDownloadActivity : AppCompatActivity() {
         override fun onPreExecute() {
             super.onPreExecute()
             progressDialog = ProgressDialog(this@DatabaseDownloadActivity).apply {
-                setMessage("Downloading...")
+                setMessage("Preparing download...")
                 setCancelable(false)
+                setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
+                isIndeterminate = false
                 show()
             }
         }
@@ -129,69 +149,64 @@ class DatabaseDownloadActivity : AppCompatActivity() {
             downloadPath = params[0].second
 
             return try {
-                println("Starting download: $currentFilePath")
-
-                // Use the direct download URL
                 val url = URL("https://huggingface.co/datasets/eja/wikilite/resolve/main/$currentFilePath")
-                println("Download URL: $url")
-
                 val connection = url.openConnection()
                 connection.connect()
 
+                val fileLength = connection.contentLength.toLong()
+
+                val finalFileName = currentFilePath.substringAfterLast("/").replace(".gz", "")
+                val outputFile = File(downloadPath, finalFileName)
+                finalDbPath = outputFile.absolutePath
+
                 val inputStream = connection.getInputStream()
-                val fileName = currentFilePath.substringAfterLast("/")
-                val downloadFilePath = "$downloadPath/$fileName"
-                val downloadFile = File(downloadFilePath)
-                val outputStream = FileOutputStream(downloadFile)
+                var totalExtractedBytes = 0L
 
-                // Download the file
-                val buffer = ByteArray(8192)
-                var bytesRead: Int
-                var totalBytes = 0
-
-                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                    outputStream.write(buffer, 0, bytesRead)
-                    totalBytes += bytesRead
+                val countingInputStream = object : FilterInputStream(inputStream) {
+                    var bytesDownloaded = 0L
+                    override fun read(b: ByteArray, off: Int, len: Int): Int {
+                        val result = super.read(b, off, len)
+                        if (result != -1) {
+                            bytesDownloaded += result
+                            publishProgress(bytesDownloaded, fileLength, totalExtractedBytes)
+                        }
+                        return result
+                    }
                 }
 
-                outputStream.close()
-                inputStream.close()
-
-                println("Downloaded $totalBytes bytes to: $downloadFilePath")
-
-                // Extract the .gz file
-                val extractedPath = downloadFilePath.replace(".gz", "")
-                println("Extracting to: $extractedPath")
-
-                extractGzipFile(downloadFilePath, extractedPath)
-
-                // Delete the .gz file
-                downloadFile.delete()
-                println("Deleted gz file")
-
-                finalDbPath = extractedPath
-                println("Final DB path: $finalDbPath")
+                FileOutputStream(outputFile).use { fos ->
+                    GZIPInputStream(countingInputStream).use { gis ->
+                        val buffer = ByteArray(8192)
+                        var bytesRead: Int
+                        while (gis.read(buffer).also { bytesRead = it } != -1) {
+                            fos.write(buffer, 0, bytesRead)
+                            totalExtractedBytes += bytesRead
+                        }
+                    }
+                }
                 true
 
             } catch (e: Exception) {
-                println("Download error: ${e.message}")
+                println("Download/Extraction error: ${e.message}")
                 e.printStackTrace()
                 false
             }
         }
 
-        @Throws(IOException::class)
-        private fun extractGzipFile(gzipFile: String, outputFile: String) {
-            FileInputStream(gzipFile).use { fis ->
-                GZIPInputStream(fis).use { gis ->
-                    FileOutputStream(outputFile).use { fos ->
-                        val buffer = ByteArray(8192)
-                        var bytesRead: Int
-                        while (gis.read(buffer).also { bytesRead = it } != -1) {
-                            fos.write(buffer, 0, bytesRead)
-                        }
-                    }
-                }
+        override fun onProgressUpdate(vararg values: Long?) {
+            super.onProgressUpdate(*values)
+            val downloaded = values[0] ?: 0L
+            val totalDownload = values[1] ?: -1L
+            val extracted = values[2] ?: 0L
+
+            val extractedMB = extracted / (1024 * 1024)
+
+            if (totalDownload > 0) {
+                progressDialog?.max = totalDownload.toInt()
+                progressDialog?.progress = downloaded.toInt()
+                progressDialog?.setMessage("Downloading...")
+            } else {
+                progressDialog?.setMessage("Extracted: ${extractedMB}MB")
             }
         }
 
